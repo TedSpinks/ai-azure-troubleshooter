@@ -1,0 +1,22 @@
+# Byte-code files
+*.pyc
+__pycache__/
+
+# Environments
+.venv/
+venv/
+env/
+ENV/
+*.egg-info/
+.env
+.env*
+
+# Editor/OS files
+.DS_Store
+.idea/
+.vscode/
+
+# Build artifacts
+dist/
+build/
+*.whl
