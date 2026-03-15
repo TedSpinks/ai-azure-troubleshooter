@@ -4,7 +4,7 @@ An AI-powered troubleshooting assistant that investigates Azure Policy complianc
 
 The script runs locally and authenticates to Azure via your active `az login` session. For connecting to the LLM, it supports two backends: **Azure OpenAI direct** (API key, any Entra ID tenant) and **Microsoft Foundry** (only the `az login` tenant). Both connect to GPT-4.1 hosted in Microsoft Foundry, Microsoft's AI platform on Azure. Azure OpenAI is the default for cross-tenant troubleshooting; use the Foundry backend during development for its built-in OpenTelemetry tracing to Application Insights.
 
-Many organizations are cautious about consumer AI services retaining sensitive data. This tool mitigates that risk: it is stateless by design, and Microsoft Foundry's enterprise terms explicitly prohibit using your data to train models. Foundry also adds data residency, compliance, and governance controls.
+Many organizations are cautious about consumer AI services retaining sensitive data. This tool mitigates that risk: it is stateless by design, and Microsoft Foundry's [enterprise terms](https://learn.microsoft.com/en-us/azure/foundry/responsible-ai/openai/data-privacy) explicitly prohibit using your data to train models. Foundry also adds data residency, compliance, and governance controls.
 
 > **Just here to get started?** Jump to [Setup](#setup).
 
