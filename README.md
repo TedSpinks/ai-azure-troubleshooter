@@ -59,7 +59,7 @@ tools/
 
 ## Backend Options
 
-The agent supports two backends, controlled by the `BACKEND` environment variable in your `.env` file. The backend determines how the LLM is accessed — the Azure tools always authenticate to ARM using `DefaultAzureCredential` regardless of which backend is in use.
+The agent supports two backends, controlled by the `BACKEND` environment variable in your `.env` file. The backend determines how the LLM is accessed — the Azure tools always authenticate to ARM using `DefaultAzureCredential()` regardless of which backend is in use.
 
 ---
 
@@ -265,8 +265,8 @@ ENV_FILE=.env.other python3 agent.py
 Maintain one `.env` file per tenant context. A typical setup:
 
 ```
-.env              # home tenant — aoai or foundry, your own subscriptions
-.env.other        # other tenant — aoai only, target subscription ID
+.env              # home tenant — connect with aoai or foundry
+.env.other        # other tenant — aoai only
 ```
 
 The `ENV_FILE` shell variable tells the script which `.env` file to load. It is read from the shell environment before `load_dotenv()` is called — there is no chicken-and-egg problem because it comes from the shell, not from a `.env` file.
