@@ -2,7 +2,7 @@
 
 An AI-powered troubleshooting assistant that investigates Azure Policy compliance issues and ARM deployment failures using live data from your Azure environment. You describe the problem in plain English; the agent reasons through it, calls the appropriate Azure APIs, and synthesizes a root cause explanation.
 
-The script runs locally and authenticates to Azure via your active `az login` session. It supports two backends: **Azure OpenAI direct** (API key, any Entra ID tenant) and **Microsoft Foundry** (only the `az login` tenant). Both connect to GPT-4.1 hosted in Microsoft Foundry, Microsoft's AI platform on Azure. Azure OpenAI is the default for cross-tenant troubleshooting; use the Foundry backend during development for its built-in OpenTelemetry tracing to Application Insights.
+The script runs locally and authenticates to Azure via your active `az login` session. For connecting to the LLM, it supports two backends: **Azure OpenAI direct** (API key, any Entra ID tenant) and **Microsoft Foundry** (only the `az login` tenant). Both connect to GPT-4.1 hosted in Microsoft Foundry, Microsoft's AI platform on Azure. Azure OpenAI is the default for cross-tenant troubleshooting; use the Foundry backend during development for its built-in OpenTelemetry tracing to Application Insights.
 
 The script will work with any OpenAI-compatible endpoint, but GPT-4.1 is strongly recommended — this agent relies heavily on multi-step tool chaining and instruction-following where model capability matters significantly. For data residency, compliance, and Azure-native billing, host your model in Azure rather than the public OpenAI API.
 
