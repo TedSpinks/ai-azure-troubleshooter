@@ -194,6 +194,8 @@ AZURE_OPENAI_DEPLOYMENT=gpt-4.1
 AZURE_OPENAI_API_VERSION=2024-05-01-preview
 ```
 
+> **That's it!** If you're not doing agent tuning/development, you can skip to to [Step 4 — Run the agent](##step-4--run-the-agent).
+
 To also use the **Microsoft Foundry (`foundry`) backend**, retrieve your project endpoint:
 
 1. Copy the project endpoint from the Foundry project overview page — it looks like `https://<n>.services.ai.azure.com/api/projects/<project-name>`
