@@ -31,11 +31,11 @@ agent.py                # Single entry point — supports both backends
 tools/
   __init__.py
   azure_client.py       # Shared auth + HTTP helpers
-  activity_logs.py      # get_activity_logs
-  policy.py             # Policy-specific tools
-  resources.py          # ARM resource + deployment tools
-.env                    # Your first tenant configuration
-.env.other              # Example of a second tenant configuration
+  activity_logs.py      # Get Activity Logs
+  policy.py             # Get Policy-related resource details
+  resources.py          # Get ARM resource + deployment details
+.env                    # Your connection info
+.env.other              # Example of connecting to a second tenant
 ```
 
 ---
@@ -234,7 +234,7 @@ BACKEND=foundry python3 agent.py
 
 > **That's it!** Now describe your problem to the agent to start troubleshooting!
 
-Run against a different tenant:
+To run against a different tenant:
 
 ```bash
 # Log into the target tenant first
@@ -257,9 +257,9 @@ Describe your problem and I'll investigate. Type 'exit' to quit.
 
 ---
 
-## Multi-Tenant Usage
+## Tips For Multi-Tenant Usage
 
-The agent tools authenticate to Azure ARM using `DefaultAzureCredential`, which respects whichever tenant your Azure CLI is currently logged into. To troubleshoot a subscription in a different Entra ID tenant:
+The agent tools authenticate to Azure ARM using `DefaultAzureCredential()`, which respects whichever tenant your Azure CLI is currently logged into. To troubleshoot a subscription in a different Entra ID tenant:
 
 ```bash
 az login --tenant <target-tenant-id>
