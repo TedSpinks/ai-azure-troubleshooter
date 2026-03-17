@@ -150,7 +150,7 @@ source .venv/bin/activate
 
 ### Step 2 — Install dependencies
 
-Minimal install (aoai backend only — suitable for cross-tenant use):
+Minimal install (aoai backend only, for typical cross-tenant use):
 
 ```bash
 pip install azure-identity openai python-dotenv
