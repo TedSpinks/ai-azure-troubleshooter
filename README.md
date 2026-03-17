@@ -1,4 +1,4 @@
-# Azure Policy & Deployment Troubleshooting Agent
+# AI-Powered Azure Troubleshooter
 
 An AI-powered troubleshooting assistant that investigates Azure Policy compliance issues and ARM deployment failures using live data from your Azure environment. You describe the problem in plain English and guide the investigation; the agent reasons through it, calls the appropriate Azure APIs, and synthesizes a root cause explanation.
 
