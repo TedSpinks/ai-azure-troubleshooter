@@ -232,6 +232,8 @@ Switch to the Foundry backend for a development session:
 BACKEND=foundry python3 agent.py
 ```
 
+> **That's it!** Now describe your problem to the agent to start troubleshooting!
+
 Run against a different tenant:
 
 ```bash
