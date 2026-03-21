@@ -1,4 +1,4 @@
-from tools.azure_client import azure_get, azure_post
+from tools.azure_client import azure_get, azure_get_paged, azure_post
 from datetime import datetime, timezone, timedelta
 import json
 
@@ -54,11 +54,13 @@ def get_resource_properties(resource_id: str) -> dict:
         "api_version_used": api_version
     }
 
+
 def list_resource_groups(
     subscription_id: str,
     name_filter: str = None,
     location_filter: str = None,
-    tag_filter: dict = None
+    tag_filter: dict = None,
+    max_results: int = 500
 ) -> dict:
     """
     List resource groups in a subscription with optional filtering.
@@ -74,10 +76,10 @@ def list_resource_groups(
             Normalizes common aliases (e.g. "east us 2" → "eastus2").
         tag_filter: Optional dict of tag key/value pairs that must all be
             present on the resource group. E.g. {"env": "prod", "team": "platform"}.
+        max_results: Maximum number of resource groups to return. Defaults to
+            500, which covers most subscriptions in full. Increase if results
+            appear truncated.
     """
-    # The ARM API supports server-side tag filtering via $filter parameter
-    # but name and location filtering is more reliably done client-side
-    # since the API's $filter for tagName/tagValue only supports one tag at a time.
     params = "api-version=2021-04-01"
     if tag_filter and len(tag_filter) == 1:
         # Single tag — use server-side filter for efficiency
@@ -85,14 +87,16 @@ def list_resource_groups(
         import urllib.parse
         params += f"&$filter=tagName+eq+'{urllib.parse.quote(key)}'+and+tagValue+eq+'{urllib.parse.quote(value)}'"
 
-    result = azure_get(
+    result = azure_get_paged(
         f"https://management.azure.com/subscriptions/{subscription_id}"
-        f"/resourcegroups?{params}"
+        f"/resourcegroups?{params}",
+        max_results=max_results
     )
     if not result["ok"]:
         return {"error": result["error"]}
 
     groups = result["data"].get("value", [])
+    results_truncated = result["results_truncated"]
 
     # Client-side filtering for name, location, and multi-tag
     if name_filter:
@@ -102,7 +106,6 @@ def list_resource_groups(
         ]
 
     if location_filter:
-        # Normalize by removing spaces and lowercasing
         normalized = location_filter.replace(" ", "").lower()
         groups = [
             g for g in groups
@@ -110,7 +113,6 @@ def list_resource_groups(
         ]
 
     if tag_filter and len(tag_filter) > 1:
-        # Multi-tag client-side filtering
         def has_all_tags(g):
             resource_tags = {
                 k.lower(): v.lower()
@@ -131,7 +133,6 @@ def list_resource_groups(
             "tags": g.get("tags", {})
         })
 
-    # Build a human-readable description of what filters were applied
     filter_desc = []
     if name_filter:
         filter_desc.append(f"name contains '{name_filter}'")
@@ -141,9 +142,16 @@ def list_resource_groups(
         filter_desc.append(f"tags {tag_filter}")
     filter_str = f" (filtered by {', '.join(filter_desc)})" if filter_desc else ""
 
+    truncation_note = (
+        f" — result limit of {max_results} reached, results are incomplete."
+        " Increase max_results or apply filters to narrow scope."
+        if results_truncated else ""
+    )
+
     return {
         "resource_groups": trimmed,
         "count": len(trimmed),
+        "results_truncated": results_truncated,
         "names": [g["name"] for g in trimmed],
         "filters_applied": {
             "name_filter": name_filter,
@@ -151,10 +159,11 @@ def list_resource_groups(
             "tag_filter": tag_filter
         },
         "summary": (
-            f"Found {len(trimmed)} resource group(s){filter_str}: "
+            f"Found {len(trimmed)} resource group(s){filter_str}{truncation_note}: "
             + ", ".join(g["name"] for g in trimmed)
         )
     }
+
 
 def get_deployment_operations(
     subscription_id: str,
@@ -259,10 +268,9 @@ def get_deployment_operations(
             "count": count,
             "failed_count": len(failed),
             "failed_deployments": failed,
-            "summary": (
-                f"{summary_prefix}, {len(failed)} failed."
-            )
+            "summary": f"{summary_prefix}, {len(failed)} failed."
         }
+
 
 def get_deployment_template(
     subscription_id: str,
@@ -292,41 +300,28 @@ def get_deployment_template(
     template = result["data"].get("template", {})
     resources = template.get("resources", [])
 
-    # Extract scope target resource IDs explicitly so the agent can pass them
-    # directly to get_resource_properties without having to parse nested JSON.
     scope_targets = []
     for resource in resources:
         props = resource.get("properties", {})
 
-        # scope is used by some resource types (e.g. smartdetectoralertrules)
         scope = props.get("scope", [])
         if isinstance(scope, list):
             scope_targets.extend(scope)
         elif isinstance(scope, str):
             scope_targets.append(scope)
 
-        # scopes (plural) is used by other resource types
         scopes = props.get("scopes", [])
         if isinstance(scopes, list):
             scope_targets.extend(scopes)
 
-    # Filter to valid ARM resource IDs only
     scope_targets = [t for t in scope_targets if t.startswith("/subscriptions/")]
 
-    # Build a brief summary of what the template was deploying
     resource_types = list({r.get("type", "unknown") for r in resources})
     resource_names = [r.get("name", "unknown") for r in resources]
 
     return {
         "deployment_name": deployment_name,
         "template": template,
-        # scope_target_resource_ids contains the full ARM resource IDs of any
-        # existing resources that this deployment was targeting or monitoring
-        # (e.g. an Application Insights component that a Smart Detection alert
-        # rule was scoped to). These are extracted from the template's scope/scopes
-        # properties and are ready to pass directly to get_resource_properties.
-        # This is distinct from the resource type being deployed — it identifies
-        # the resource that likely triggered this deployment when it was created.
         "scope_target_resource_ids": scope_targets,
         "resource_types": resource_types,
         "resource_names": resource_names,
@@ -336,6 +331,7 @@ def get_deployment_template(
             f"Scope targets: {scope_targets if scope_targets else 'none found'}"
         )
     }
+
 
 def get_deployment_details(
     subscription_id: str,
@@ -381,5 +377,71 @@ def get_deployment_details(
         "summary": (
             f"Deployment '{d.get('name')}' — {props.get('provisioningState')}. "
             f"Correlation ID: {props.get('correlationId')}"
+        )
+    }
+
+
+def list_resources(
+    subscription_id: str,
+    resource_group: str,
+    resource_type: str = None,
+    max_results: int = 500
+) -> dict:
+    """
+    List all resources in a resource group, with optional filtering by
+    resource type. Use this when you need to enumerate resources of a
+    specific type (e.g. all VMs) without knowing their names — for example,
+    when checking policy evaluation details across all VMs in a group.
+
+    Args:
+        subscription_id: Azure subscription ID
+        resource_group: Resource group to list resources in
+        resource_type: Optional resource type filter, e.g.
+            'Microsoft.Compute/virtualMachines'. Case-insensitive.
+        max_results: Maximum number of resources to return. Defaults to 500.
+            Increase if results appear truncated.
+    """
+    url = (
+        f"https://management.azure.com/subscriptions/{subscription_id}"
+        f"/resourceGroups/{resource_group}"
+        f"/resources?api-version=2021-04-01"
+    )
+    if resource_type:
+        import urllib.parse
+        url += f"&$filter=resourceType+eq+'{urllib.parse.quote(resource_type)}'"
+
+    result = azure_get_paged(url, max_results=max_results)
+    if not result["ok"]:
+        return {"error": result["error"]}
+
+    resources = result["data"].get("value", [])
+    results_truncated = result["results_truncated"]
+
+    trimmed = []
+    for r in resources:
+        trimmed.append({
+            "id": r.get("id"),
+            "name": r.get("name"),
+            "type": r.get("type"),
+            "location": r.get("location"),
+            "tags": r.get("tags", {})
+        })
+
+    filter_str = f" of type '{resource_type}'" if resource_type else ""
+    truncation_note = (
+        f" — result limit of {max_results} reached, results are incomplete."
+        " Increase max_results or filter by resource_type to narrow scope."
+        if results_truncated else ""
+    )
+
+    return {
+        "resources": trimmed,
+        "count": len(trimmed),
+        "results_truncated": results_truncated,
+        "resource_group": resource_group,
+        "resource_ids": [r["id"] for r in trimmed],
+        "summary": (
+            f"Found {len(trimmed)} resource(s){filter_str} "
+            f"in '{resource_group}'{truncation_note}"
         )
     }

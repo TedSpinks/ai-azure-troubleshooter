@@ -16,6 +16,7 @@ from tools.resources import (
     get_deployment_template,
     get_deployment_details,
     list_resource_groups,
+    list_resources,
 )
 
 env_file = os.environ.get("ENV_FILE", ".env")
@@ -27,19 +28,18 @@ load_dotenv(env_file)
 #   aoai     — Azure OpenAI direct (cross-tenant, no tracing)
 #
 # Set BACKEND in your .env file or shell environment.
-# Foundry is the default for backwards compatibility.
 
 BACKEND         = os.environ.get("BACKEND", "aoai")
 SUBSCRIPTION_ID = os.environ["AZURE_SUBSCRIPTION_ID"]
 
 # Foundry-specific config (only required when BACKEND=foundry)
 PROJECT_ENDPOINT = os.environ.get("FOUNDRY_PROJECT_ENDPOINT")
-FOUNDRY_MODEL    = os.environ.get("FOUNDRY_MODEL_DEPLOYMENT", "gpt--4.1")
+FOUNDRY_MODEL    = os.environ.get("FOUNDRY_MODEL_DEPLOYMENT", "gpt-4.1")
 
 # Azure OpenAI config (only required when BACKEND=aoai)
 AOAI_ENDPOINT    = os.environ.get("AZURE_OPENAI_ENDPOINT")
 AOAI_API_KEY     = os.environ.get("AZURE_OPENAI_API_KEY")
-AOAI_DEPLOYMENT  = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt--4.1")
+AOAI_DEPLOYMENT  = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1")
 AOAI_API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-05-01-preview")
 
 # ── Tool registry ─────────────────────────────────────────────────────────────
@@ -54,6 +54,7 @@ TOOL_FUNCTIONS = {
         hours_back=args.get("hours_back", 48),
         filter_text=args.get("filter_text"),
         correlation_id=args.get("correlation_id"),
+        max_events=args.get("max_events", 200),
     ),
     "get_policy_definition": lambda args: get_policy_definition(
         policy_definition_id=args["policy_definition_id"],
@@ -63,16 +64,19 @@ TOOL_FUNCTIONS = {
         resource_group=args.get("resource_group"),
         policy_assignment_id=args.get("policy_assignment_id"),
         resource_id=args.get("resource_id"),
+        max_results=args.get("max_results", 500),
     ),
     "get_policy_evaluation_details": lambda args: get_policy_evaluation_details(
         subscription_id=args.get("subscription_id", SUBSCRIPTION_ID),
         resource_id=args["resource_id"],
         policy_assignment_id=args.get("policy_assignment_id"),
+        max_results=args.get("max_results", 200),
     ),
     "get_remediation_tasks": lambda args: get_remediation_tasks(
         subscription_id=args.get("subscription_id", SUBSCRIPTION_ID),
         resource_group=args.get("resource_group"),
         policy_assignment_id=args.get("policy_assignment_id"),
+        max_results=args.get("max_results", 100),
     ),
     "get_resource_properties": lambda args: get_resource_properties(
         resource_id=args["resource_id"],
@@ -85,6 +89,16 @@ TOOL_FUNCTIONS = {
     ),
     "list_resource_groups": lambda args: list_resource_groups(
         subscription_id=args.get("subscription_id", SUBSCRIPTION_ID),
+        name_filter=args.get("name_filter"),
+        location_filter=args.get("location_filter"),
+        tag_filter=args.get("tag_filter"),
+        max_results=args.get("max_results", 500),
+    ),
+    "list_resources": lambda args: list_resources(
+        subscription_id=args.get("subscription_id", SUBSCRIPTION_ID),
+        resource_group=args["resource_group"],
+        resource_type=args.get("resource_type"),
+        max_results=args.get("max_results", 500),
     ),
     "get_deployment_template": lambda args: get_deployment_template(
         subscription_id=args.get("subscription_id", SUBSCRIPTION_ID),
@@ -141,7 +155,16 @@ TOOL_DEFINITIONS = [
                     },
                     "filter_text": {
                         "type": "string",
-                        "description": "Optional keyword to filter by resource name or ID fragment."
+                        "description": (
+                            "Optional keyword to filter results by resource name "
+                            "fragment or operation name. Applied client-side after "
+                            "fetching — partial names and keywords both work, e.g. "
+                            "'mitn-ap-ds1a' to narrow to a specific resource, or "
+                            "'Microsoft.PolicyInsights' to find policy events. "
+                            "Note: if the API returns 200 events before filtering, "
+                            "results may be incomplete — narrow the time window or "
+                            "resource group scope if this occurs."
+                        )
                     },
                     "correlation_id": {
                         "type": "string",
@@ -151,6 +174,15 @@ TOOL_DEFINITIONS = [
                             "parent deployments that triggered a child deployment. "
                             "When providing this, omit resource_group — the search must run "
                             "at subscription scope to return complete results."
+                        )
+                    },
+                    "max_events": {
+                        "type": "integer",
+                        "description": (
+                            "Maximum number of events to return. Defaults to 200. "
+                            "Activity logs can be very high volume — increase only when "
+                            "results_truncated is true and narrowing scope is not sufficient. "
+                            "Prefer narrowing with resource_group, filter_text, or hours_back first."
                         )
                     }
                 },
@@ -247,6 +279,14 @@ TOOL_DEFINITIONS = [
                     "resource_id": {
                         "type": "string",
                         "description": "Get compliance state for one specific resource."
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": (
+                            "Maximum number of compliance records to return. Defaults to 500. "
+                            "Increase if results_truncated is true, or narrow scope with "
+                            "resource_group or policy_assignment_id."
+                        )
                     }
                 },
                 "required": []
@@ -278,6 +318,13 @@ TOOL_DEFINITIONS = [
                     "policy_assignment_id": {
                         "type": "string",
                         "description": "Optional — narrow results to one assignment."
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": (
+                            "Maximum number of evaluation records to return. Defaults to 200, "
+                            "which is generous for a single resource. Increase if results_truncated is true."
+                        )
                     }
                 },
                 "required": ["resource_id"]
@@ -309,6 +356,13 @@ TOOL_DEFINITIONS = [
                     "policy_assignment_id": {
                         "type": "string",
                         "description": "Filter to a specific policy assignment."
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": (
+                            "Maximum number of remediation tasks to return. Defaults to 100, "
+                            "which covers most environments in full. Increase if results_truncated is true."
+                        )
                     }
                 },
                 "required": []
@@ -420,9 +474,66 @@ TOOL_DEFINITIONS = [
                             "to resources by environment, team, or cost center tags. "
                             "E.g. {\"environment\": \"production\", \"team\": \"platform\"}."
                         )
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": (
+                            "Maximum number of resource groups to return. Defaults to 500, "
+                            "which covers most subscriptions in full. Increase if "
+                            "results_truncated is true in the response."
+                        )
                     }
                 },
                 "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_resources",
+            "description": (
+                "List all resources in a resource group, optionally filtered by "
+                "resource type. Use this when you need to enumerate resources of a "
+                "specific type without knowing their names — for example, to get "
+                "all VMs in a resource group before checking policy evaluation "
+                "details or resource properties for each one. The result includes "
+                "a resource_ids field containing the full ARM resource IDs ready "
+                "to pass directly to other tools. "
+                "Note: the ARM resources list API does not support deeply nested "
+                "sub-resource types such as "
+                "Microsoft.RecoveryServices/vaults/backupFabrics/protectionContainers/protectedItems. "
+                "For these, an empty result may not mean the resource does not exist — "
+                "a dedicated API call may be required to get accurate results."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "subscription_id": {
+                        "type": "string",
+                        "description": "Azure subscription ID. Uses default if not provided."
+                    },
+                    "resource_group": {
+                        "type": "string",
+                        "description": "Resource group to list resources in."
+                    },
+                    "resource_type": {
+                        "type": "string",
+                        "description": (
+                            "Optional resource type to filter by, e.g. "
+                            "'Microsoft.Compute/virtualMachines'. "
+                            "Omit to return all resources in the group."
+                        )
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": (
+                            "Maximum number of resources to return. Defaults to 500. "
+                            "Increase if results_truncated is true in the response."
+                        )
+                    }
+                },
+                "required": ["resource_group"]
             }
         }
     },

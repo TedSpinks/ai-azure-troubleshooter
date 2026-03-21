@@ -212,6 +212,7 @@ The `ENV_FILE` shell variable tells the script which `.env` file to load. It is 
 | `get_deployment_template` | Retrieve the ARM template used in a deployment |
 | `get_deployment_details` | Get full deployment details including correlation ID |
 | `list_resource_groups` | List resource groups with optional filtering |
+| `list_resources` | List all resources in a resource group by type |
 
 ---
 

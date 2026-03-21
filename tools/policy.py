@@ -1,4 +1,4 @@
-from tools.azure_client import azure_get, azure_post
+from tools.azure_client import azure_get, azure_get_paged, azure_post, azure_post_paged
 import urllib.parse
 
 
@@ -37,7 +37,8 @@ def get_policy_compliance_state(
     subscription_id: str,
     resource_group: str = None,
     policy_assignment_id: str = None,
-    resource_id: str = None
+    resource_id: str = None,
+    max_results: int = 500
 ) -> dict:
     """
     Get policy compliance state for a scope or specific resource.
@@ -49,6 +50,9 @@ def get_policy_compliance_state(
         resource_group: Optional — scope to a resource group
         policy_assignment_id: Optional — filter to one assignment
         resource_id: Optional — single resource lookup
+        max_results: Maximum number of compliance records to return.
+            Defaults to 500. Increase if results_truncated is true,
+            or narrow scope with resource_group or policy_assignment_id.
     """
     if resource_id:
         url = (
@@ -70,15 +74,17 @@ def get_policy_compliance_state(
             f"?api-version=2019-10-01"
         )
 
-    body = {"$top": 100}
+    body = {}
     if policy_assignment_id:
         body["$filter"] = f"policyAssignmentId eq '{policy_assignment_id}'"
 
-    result = azure_post(url, body)
+    result = azure_post_paged(url, body, max_results=max_results)
     if not result["ok"]:
         return {"error": result["error"]}
 
     states = result["data"].get("value", [])
+    results_truncated = result["results_truncated"]
+
     summary = {}
     for s in states:
         state = s.get("complianceState", "unknown")
@@ -96,18 +102,26 @@ def get_policy_compliance_state(
         "subscription_id": s.get("subscriptionId")
     } for s in states]
 
+    truncation_note = (
+        f" — result limit of {max_results} reached, results are incomplete."
+        " Increase max_results or narrow scope with resource_group or policy_assignment_id."
+        if results_truncated else ""
+    )
+
     return {
         "states": trimmed,
         "count": len(trimmed),
+        "results_truncated": results_truncated,
         "summary_by_state": summary,
-        "summary": f"Found {len(trimmed)} compliance records. Breakdown: {summary}"
+        "summary": f"Found {len(trimmed)} compliance records{truncation_note}. Breakdown: {summary}"
     }
 
 
 def get_policy_evaluation_details(
     subscription_id: str,
     resource_id: str,
-    policy_assignment_id: str = None
+    policy_assignment_id: str = None,
+    max_results: int = 200
 ) -> dict:
     """
     Get detailed evaluation results for a specific resource showing exactly
@@ -118,6 +132,9 @@ def get_policy_evaluation_details(
         subscription_id: Azure subscription ID
         resource_id: Full resource ID to inspect
         policy_assignment_id: Optional — narrow to one assignment
+        max_results: Maximum number of evaluation records to return.
+            Defaults to 200, which is generous for a single resource.
+            Increase if results_truncated is true.
     """
     url = (
         f"https://management.azure.com{resource_id}"
@@ -129,11 +146,13 @@ def get_policy_evaluation_details(
     if policy_assignment_id:
         body["$filter"] = f"policyAssignmentId eq '{policy_assignment_id}'"
 
-    result = azure_post(url, body)
+    result = azure_post_paged(url, body, max_results=max_results)
     if not result["ok"]:
         return {"error": result["error"]}
 
     states = result["data"].get("value", [])
+    results_truncated = result["results_truncated"]
+
     results = [{
         "resource_id": s.get("resourceId"),
         "compliance_state": s.get("complianceState"),
@@ -144,17 +163,25 @@ def get_policy_evaluation_details(
         "timestamp": s.get("timestamp")
     } for s in states]
 
+    truncation_note = (
+        f" — result limit of {max_results} reached, results are incomplete."
+        " Increase max_results or narrow with policy_assignment_id."
+        if results_truncated else ""
+    )
+
     return {
         "results": results,
         "count": len(results),
-        "summary": f"Found {len(results)} detailed evaluation records for this resource"
+        "results_truncated": results_truncated,
+        "summary": f"Found {len(results)} detailed evaluation records for this resource{truncation_note}"
     }
 
 
 def get_remediation_tasks(
     subscription_id: str,
     resource_group: str = None,
-    policy_assignment_id: str = None
+    policy_assignment_id: str = None,
+    max_results: int = 100
 ) -> dict:
     """
     Get DINE/Modify remediation tasks showing whether remediation was
@@ -165,6 +192,9 @@ def get_remediation_tasks(
         subscription_id: Azure subscription ID
         resource_group: Optional — scope to a resource group
         policy_assignment_id: Optional — filter to one assignment
+        max_results: Maximum number of remediation tasks to return.
+            Defaults to 100, which covers most environments in full.
+            Increase if results_truncated is true.
     """
     base = f"/subscriptions/{subscription_id}"
     if resource_group:
@@ -180,11 +210,13 @@ def get_remediation_tasks(
         f"?{urllib.parse.urlencode(params)}"
     )
 
-    result = azure_get(url)
+    result = azure_get_paged(url, max_results=max_results)
     if not result["ok"]:
         return {"error": result["error"]}
 
     tasks = result["data"].get("value", [])
+    results_truncated = result["results_truncated"]
+
     trimmed = []
     for t in tasks:
         props = t.get("properties", {})
@@ -203,8 +235,15 @@ def get_remediation_tasks(
             "filters": props.get("filters", {})
         })
 
+    truncation_note = (
+        f" — result limit of {max_results} reached, results are incomplete."
+        " Increase max_results or narrow scope with resource_group or policy_assignment_id."
+        if results_truncated else ""
+    )
+
     return {
         "tasks": trimmed,
         "count": len(trimmed),
-        "summary": f"Found {len(trimmed)} remediation tasks"
+        "results_truncated": results_truncated,
+        "summary": f"Found {len(trimmed)} remediation tasks{truncation_note}"
     }
