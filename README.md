@@ -4,7 +4,7 @@ You know those troubleshooting sessions where you're copying errors and logs fro
 
 Features:
 - Runs locally on your laptop, just `az login` to whatever Azure tenant you're investigating
-- Uses an LLM in your private Foundry instance (one-time setup in Azure, ~10 min), so ***no company data*** goes into consumer AI tools
+- Uses an LLM in your private Microsoft Foundry instance (one-time setup in Azure, ~10 min), so ***no company data*** goes into consumer AI tools
 
 Many organizations are cautious about consumer AI services retaining sensitive data. This tool mitigates that risk: it is stateless by design, and Microsoft Foundry's [enterprise terms](https://learn.microsoft.com/en-us/azure/foundry/responsible-ai/openai/data-privacy) explicitly prohibit using your data to train models. Foundry also adds data residency, compliance, and governance controls.
 
