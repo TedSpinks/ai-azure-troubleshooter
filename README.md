@@ -1,12 +1,28 @@
 # AI-Powered Azure Troubleshooter
 
-An AI-powered troubleshooting assistant that investigates Azure Policy compliance issues and ARM deployment failures using live data from your Azure environment. You describe the problem in plain English and guide the investigation; the agent reasons through it, calls the appropriate Azure APIs, and synthesizes a root cause explanation.
+You know those troubleshooting sessions where you're copying errors and logs from five different places in the Azure Portal into Claude or ChatGPT, one event at a time? Activity logs, deployment operations, policy evaluations... it's tedious. I built this chat agent to go and get all of that itself. You describe the problem and guide the investigation; the agent figures out what to look at, calls the right Azure APIs, and synthesizes a root cause explanation.
 
-The script runs locally and authenticates to Azure via your active `az login` session. For connecting to the LLM, it supports two backends: **Azure OpenAI direct** (API key, any Entra ID tenant) and **Microsoft Foundry** (only the `az login` tenant). Both connect to GPT-4.1 hosted in Microsoft Foundry, Microsoft's AI platform on Azure. Use the default Azure OpenAI for your troubleshooting in any tenant; use the Foundry backend for agent tuning/development with tracing to Application Insights.
+Features:
+- Runs locally on your laptop, just `az login` to whatever Azure tenant you're investigating
+- Uses an LLM in your private Foundry instance (one-time setup in Azure, ~10 min), so ***no company data*** goes into consumer AI tools
 
 Many organizations are cautious about consumer AI services retaining sensitive data. This tool mitigates that risk: it is stateless by design, and Microsoft Foundry's [enterprise terms](https://learn.microsoft.com/en-us/azure/foundry/responsible-ai/openai/data-privacy) explicitly prohibit using your data to train models. Foundry also adds data residency, compliance, and governance controls.
 
 > **Just here to get started?** Jump to [Setup](#setup).
+
+---
+
+## Table of Contents
+
+- [What It Does](#what-it-does)
+- [Setup](#setup)
+- [Tips For Multi-Tenant Usage](#tips-for-multi-tenant-usage)
+- [Backend Options](#backend-options)
+- [Tools Available to the Agent](#tools-available-to-the-agent)
+- [How the Conversation Loop Works](#how-the-conversation-loop-works)
+- [Tracing and Observability](#tracing-and-observability)
+- [System Prompt Design](#system-prompt-design)
+- [Ollama Local Model (Experimental)](#ollama-local-model-experimental--not-recommended)
 
 ---
 
@@ -24,36 +40,161 @@ The agent is designed to investigate four categories of problems:
 
 ---
 
-## Project Structure
+## Setup
 
-```
-agent.py                # Single entry point — supports both backends
-tools/
-  __init__.py
-  azure_client.py       # Shared auth + HTTP helpers
-  activity_logs.py      # Get Activity Logs
-  policy.py             # Get Policy-related resource details
-  resources.py          # Get ARM resource + deployment details
-.env                    # Your connection info
-.env.other              # Example of connecting to a second tenant
+The script runs locally and authenticates to Azure via your active `az login` session. For connecting to the LLM, it supports two backends: **Azure OpenAI direct** (API key, any Entra ID tenant) and **Microsoft Foundry** (only the `az login` tenant). Both connect to the same GPT-4.1 hosted in your Microsoft Foundry, in Azure.
+
+Use the **Azure OpenAI** backend (default) for daily use. Use the **Foundry** backend for agent tuning/development with tracing to Application Insights (but requires Foundry to be in your `az login` tenant).
+
+### Prerequisites
+
+- Python 3.10 or later
+- Azure CLI installed and logged in (`az login`)
+- A Microsoft Foundry project with a GPT-4.1 deployment (see Step 3 below)
+
+---
+
+### Step 1 — Clone the repo and create a virtual environment
+
+```bash
+git clone <repo-url>
+cd ai-azure-troubleshooter
+
+python3 -m venv .venv
+source .venv/bin/activate
 ```
 
 ---
 
-## Tools Available to the Agent
+### Step 2 — Install dependencies
 
-| Tool | Purpose |
-|------|---------|
-| `get_activity_logs` | Fetch activity logs by time window or correlation ID |
-| `get_policy_definition` | Fetch a policy's full if/then rule and effect |
-| `get_policy_compliance_state` | Get compliance state for a scope or resource |
-| `get_policy_evaluation_details` | See exactly which conditions passed or failed |
-| `get_remediation_tasks` | Check DINE/Modify remediation task status |
-| `get_resource_properties` | Fetch full ARM properties of any resource |
-| `get_deployment_operations` | List deployments or drill into a specific one |
-| `get_deployment_template` | Retrieve the ARM template used in a deployment |
-| `get_deployment_details` | Get full deployment details including correlation ID |
-| `list_resource_groups` | List resource groups with optional filtering |
+Minimal install (aoai backend only — suitable for daily use):
+
+```bash
+pip install azure-identity openai python-dotenv
+```
+
+Full install (supports both backends, for development):
+
+```bash
+pip install azure-identity \
+            azure-ai-agents \
+            azure-monitor-opentelemetry \
+            opentelemetry-sdk \
+            openai \
+            python-dotenv
+```
+
+---
+
+### Step 3 — Microsoft Foundry setup
+
+Both backends use the same Microsoft Foundry resource. If you don't have one yet:
+
+1. Go to the [Foundry Portal](https://ai.azure.com) and make sure the **New Foundry** toggle is on
+2. Use the Project dropdown at the top to select an existing project or create a new one
+3. In the **Build** tab, select **Models** from the left nav, then click **Deploy a base model** at the top right
+4. Search for **gpt-4.1**, select it, and deploy
+
+To configure the **Azure OpenAI (`aoai`) backend**, retrieve your endpoint and key:
+
+1. In the Foundry portal, navigate to **Models > your GPT-4.1 deployment > Details**
+2. The **Target URI** field shows the full path — your endpoint is the hostname portion only, e.g. `https://<n>.cognitiveservices.azure.com`
+3. Copy the **Key** from the same page
+
+Add to your `.env` file:
+
+```
+AZURE_SUBSCRIPTION_ID=<subscription-to-troubleshoot>
+AZURE_OPENAI_ENDPOINT=https://<your-resource>.cognitiveservices.azure.com
+AZURE_OPENAI_API_KEY=<your-key>
+AZURE_OPENAI_DEPLOYMENT=gpt-4.1
+AZURE_OPENAI_API_VERSION=2024-05-01-preview
+```
+
+Your working directory will look like this:
+
+```
+agent.py        # run this
+tools/          # Azure API functions called by the agent
+.env            # your connection info
+.env.other      # example of a second tenant connection
+```
+
+> **That's it!** If you're not doing agent tuning/development, you can skip to [Step 4 — Run the agent](#step-4--run-the-agent).
+
+To also use the **Microsoft Foundry (`foundry`) backend**, retrieve your project endpoint:
+
+1. Copy the project endpoint from the Foundry project overview page — it looks like `https://<n>.services.ai.azure.com/api/projects/<project-name>`
+2. Optionally, create an **Application Insights** resource and copy its connection string for tracing
+
+Add to your `.env` file:
+
+```
+BACKEND=foundry
+FOUNDRY_PROJECT_ENDPOINT=https://<your-foundry>.services.ai.azure.com/api/projects/<project>
+FOUNDRY_MODEL_DEPLOYMENT=gpt-4.1
+APPLICATIONINSIGHTS_CONNECTION_STRING=<optional>
+```
+
+---
+
+### Step 4 — Run the agent
+
+Activate your virtual environment if not already active:
+
+```bash
+source .venv/bin/activate
+```
+
+```bash
+python3 agent.py
+```
+
+> **That's it!** Now describe your problem to the agent to start troubleshooting!
+
+To run against a different tenant:
+
+```bash
+# Log into the target tenant first
+az login --tenant <target-tenant-id>
+
+# Run with an env file for that tenant
+ENV_FILE=.env.other python3 agent.py
+```
+
+The startup output always shows which environment, subscription, and backend are active:
+
+```
+Environment : .env.other
+Subscription: <subscription-id>
+Backend     : Azure OpenAI (gpt-4.1 @ https://...)
+
+Azure Troubleshooting Assistant ready.
+Describe your problem and I'll investigate. Type 'exit' to quit.
+```
+
+---
+
+## Tips For Multi-Tenant Usage
+
+The agent tools authenticate to Azure ARM using `DefaultAzureCredential()`, which respects whichever tenant your Azure CLI is currently logged into. To troubleshoot a subscription in a different Entra ID tenant:
+
+```bash
+az login --tenant <target-tenant-id>
+ENV_FILE=.env.other python3 agent.py
+```
+
+Maintain one `.env` file per tenant context. A typical setup:
+
+```
+.env              # home tenant
+.env.other        # other tenant
+```
+
+The `ENV_FILE` shell variable tells the script which `.env` file to load. It is read from the shell environment before `load_dotenv()` is called — there is no chicken-and-egg problem because it comes from the shell, not from a `.env` file.
+
+**Important:** The Foundry backend cannot be used cross-tenant. The Foundry Agents API requires a token from the same tenant as the Foundry resource. Attempting cross-tenant use produces a `Tenant provided in token does not match resource tenant` error. Always use `BACKEND=aoai` for cross-tenant work.
 
 ---
 
@@ -126,156 +267,20 @@ APPLICATIONINSIGHTS_CONNECTION_STRING=<optional — disables tracing if omitted>
 
 ---
 
-## Setup
+## Tools Available to the Agent
 
-### Prerequisites
-
-- Python 3.10 or later
-- Azure CLI installed and logged in (`az login`)
-- A Microsoft Foundry project with a GPT-4.1 deployment (see Step 3 below)
-
----
-
-### Step 1 — Clone the repo and create a virtual environment
-
-```bash
-git clone <repo-url>
-cd ai-azure-troubleshooter
-
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
----
-
-### Step 2 — Install dependencies
-
-Minimal install (aoai backend only, for typical cross-tenant use):
-
-```bash
-pip install azure-identity openai python-dotenv
-```
-
-Full install (supports both backends, for development):
-
-```bash
-pip install azure-identity \
-            azure-ai-agents \
-            azure-monitor-opentelemetry \
-            opentelemetry-sdk \
-            openai \
-            python-dotenv
-```
-
----
-
-### Step 3 — Microsoft Foundry setup
-
-Both backends use the same Microsoft Foundry resource. If you don't have one yet:
-
-1. Go to the [Foundry Portal](https://ai.azure.com) and make sure the **New Foundry** toggle is on
-2. Use the Project dropdown at the top to select an existing project or create a new one
-3. In the **Build** tab, select **Models** from the left nav, then click **Deploy a base model** at the top right
-4. Search for **gpt-4.1**, select it, and deploy
-
-To configure the **Azure OpenAI (`aoai`) backend**, retrieve your endpoint and key:
-
-1. In the Foundry portal, navigate to **Models > your GPT-4.1 deployment > Details**
-2. The **Target URI** field shows the full path — your endpoint is the hostname portion only, e.g. `https://<n>.cognitiveservices.azure.com`
-3. Copy the **Key** from the same page
-
-Add to your `.env` file:
-
-```
-AZURE_SUBSCRIPTION_ID=<subscription-to-troubleshoot>
-AZURE_OPENAI_ENDPOINT=https://<your-resource>.cognitiveservices.azure.com
-AZURE_OPENAI_API_KEY=<your-key>
-AZURE_OPENAI_DEPLOYMENT=gpt-4.1
-AZURE_OPENAI_API_VERSION=2024-05-01-preview
-```
-
-> **That's it!** If you're not doing agent tuning/development, you can skip to [Step 4 — Run the agent](#step-4--run-the-agent).
-
-To also use the **Microsoft Foundry (`foundry`) backend**, retrieve your project endpoint:
-
-1. Copy the project endpoint from the Foundry project overview page — it looks like `https://<n>.services.ai.azure.com/api/projects/<project-name>`
-2. Optionally, create an **Application Insights** resource and copy its connection string for tracing
-
-Add to your `.env` file:
-
-```
-BACKEND=foundry
-FOUNDRY_PROJECT_ENDPOINT=https://<your-foundry>.services.ai.azure.com/api/projects/<project>
-FOUNDRY_MODEL_DEPLOYMENT=gpt-4.1
-APPLICATIONINSIGHTS_CONNECTION_STRING=<optional>
-```
-
----
-
-### Step 4 — Run the agent
-
-Activate your virtual environment if not already active:
-
-```bash
-source .venv/bin/activate
-```
-
-Run with your default `.env` (uses `aoai` backend unless `BACKEND=foundry` is set):
-
-```bash
-python3 agent.py
-```
-
-Switch to the Foundry backend for a development session:
-
-```bash
-BACKEND=foundry python3 agent.py
-```
-
-> **That's it!** Now describe your problem to the agent to start troubleshooting!
-
-To run against a different tenant:
-
-```bash
-# Log into the target tenant first
-az login --tenant <target-tenant-id>
-
-# Run with an env file for that tenant
-ENV_FILE=.env.other python3 agent.py
-```
-
-The startup output always shows which environment, subscription, and backend are active:
-
-```
-Environment : .env.other
-Subscription: <subscription-id>
-Backend     : Azure OpenAI (gpt-4.1 @ https://...)
-
-Azure Troubleshooting Assistant ready.
-Describe your problem and I'll investigate. Type 'exit' to quit.
-```
-
----
-
-## Tips For Multi-Tenant Usage
-
-The agent tools authenticate to Azure ARM using `DefaultAzureCredential()`, which respects whichever tenant your Azure CLI is currently logged into. To troubleshoot a subscription in a different Entra ID tenant:
-
-```bash
-az login --tenant <target-tenant-id>
-ENV_FILE=.env.other python3 agent.py
-```
-
-Maintain one `.env` file per tenant context. A typical setup:
-
-```
-.env              # home tenant — connect with aoai or foundry
-.env.other        # other tenant — aoai only
-```
-
-The `ENV_FILE` shell variable tells the script which `.env` file to load. It is read from the shell environment before `load_dotenv()` is called — there is no chicken-and-egg problem because it comes from the shell, not from a `.env` file.
-
-**Important:** The Foundry backend cannot be used cross-tenant. The Foundry Agents API requires a token from the same tenant as the Foundry resource. Attempting cross-tenant use produces a `Tenant provided in token does not match resource tenant` error. Always use `BACKEND=aoai` for cross-tenant work.
+| Tool | Purpose |
+|------|---------|
+| `get_activity_logs` | Fetch activity logs by time window or correlation ID |
+| `get_policy_definition` | Fetch a policy's full if/then rule and effect |
+| `get_policy_compliance_state` | Get compliance state for a scope or resource |
+| `get_policy_evaluation_details` | See exactly which conditions passed or failed |
+| `get_remediation_tasks` | Check DINE/Modify remediation task status |
+| `get_resource_properties` | Fetch full ARM properties of any resource |
+| `get_deployment_operations` | List deployments or drill into a specific one |
+| `get_deployment_template` | Retrieve the ARM template used in a deployment |
+| `get_deployment_details` | Get full deployment details including correlation ID |
+| `list_resource_groups` | List resource groups with optional filtering |
 
 ---
 
