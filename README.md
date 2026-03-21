@@ -17,7 +17,6 @@ Many organizations are cautious about consumer AI services retaining sensitive d
 - [What It Does](#what-it-does)
 - [Setup](#setup)
 - [Tips For Multi-Tenant Usage](#tips-for-multi-tenant-usage)
-- [Backend Options](#backend-options)
 - [Tools Available to the Agent](#tools-available-to-the-agent)
 - [How the Conversation Loop Works](#how-the-conversation-loop-works)
 - [Tracing and Observability](#tracing-and-observability)
@@ -185,7 +184,7 @@ az login --tenant <target-tenant-id>
 ENV_FILE=.env.other python3 agent.py
 ```
 
-Maintain one `.env` file per tenant context. A typical setup:
+Maintain one local `.env` file per tenant context. A typical setup:
 
 ```
 .env              # home tenant
@@ -198,74 +197,6 @@ The `ENV_FILE` shell variable tells the script which `.env` file to load. It is 
 
 ---
 
-## Backend Options
-
-The agent supports two backends, controlled by the `BACKEND` environment variable in your `.env` file. The backend determines how the LLM is accessed — the Azure tools always authenticate to ARM using `DefaultAzureCredential()` regardless of which backend is in use.
-
----
-
-### Default: Azure OpenAI Direct (`BACKEND=aoai`)
-
-Uses the Azure OpenAI service directly via the OpenAI Python SDK. The conversation history is managed as a Python list in memory. This is the default backend because it matches the primary use case: an Azure engineer connecting to multiple tenants for troubleshooting.
-
-**Why this is the default:**
-
-Azure engineers often work across many subscriptions in different Entra ID tenants. The Foundry Agents API requires a token from the same tenant as the Foundry resource, which means it cannot be used for cross-tenant work. The Azure OpenAI endpoint is just an HTTPS URL authenticated with an API key — it has no dependency on which tenant your Azure CLI is logged into, so it works from any tenant without configuration changes. A single Azure OpenAI resource in your home tenant serves all troubleshooting scenarios regardless of which tenant you are currently investigating.
-
-**Pros:**
-- Works across Entra ID tenant boundaries — the primary use case for this tool
-- No server-side state — nothing to clean up if the script crashes
-- Same model as Foundry (GPT-4.1)
-- Simpler conversation loop — no agent/thread lifecycle to manage
-
-**Cons:**
-- No built-in tracing to Application Insights
-- Conversation history is in-memory only — lost when the script exits
-
-**Required `.env` variables:**
-```
-AZURE_SUBSCRIPTION_ID=<subscription-to-troubleshoot>
-AZURE_OPENAI_ENDPOINT=https://<your-resource>.cognitiveservices.azure.com
-AZURE_OPENAI_API_KEY=<api-key>
-AZURE_OPENAI_DEPLOYMENT=gpt-4.1
-AZURE_OPENAI_API_VERSION=2024-05-01-preview
-```
-
-`BACKEND=aoai` is optional since `aoai` is the default — the script uses it automatically if `BACKEND` is not set.
-
-**Note:** `AZURE_OPENAI_ENDPOINT` is the base hostname only — do not include the `/openai/deployments/...` path shown in the Foundry portal's Target URI field. The SDK constructs the full path from the endpoint, deployment name, and API version you provide separately.
-
----
-
-### Microsoft Foundry (`BACKEND=foundry`)
-
-Uses the Microsoft Foundry Agents API. The agent and conversation thread are created as persistent server-side objects in Foundry. This backend is recommended during active development when tracing and observability matter.
-
-**When to use Foundry:**
-
-During development and prompt tuning, Foundry provides full OpenTelemetry tracing to Application Insights. Each tool call is recorded as a span with the tool name, arguments, result summary, and success/failure status. This makes it easy to see exactly what the agent is doing turn by turn, catch regressions in tool calling behavior early, and diagnose cases where the agent is not following its investigation instructions correctly. For production cross-tenant troubleshooting, switch to the `aoai` backend.
-
-**Pros:**
-- Full tracing and observability via Application Insights — essential during development
-- Agent runs visible in Foundry portal for debugging
-- Conversation thread managed server-side — history persists across turns automatically
-- Native Azure integration
-
-**Cons:**
-- Requires a Foundry resource in the same tenant you are authenticating to
-- Cannot be used across Entra ID tenant boundaries
-- If the script crashes before cleanup, the agent object persists in Foundry and must be deleted manually
-
-**Required `.env` variables:**
-```
-BACKEND=foundry
-AZURE_SUBSCRIPTION_ID=<subscription-to-troubleshoot>
-FOUNDRY_PROJECT_ENDPOINT=https://<your-foundry>.services.ai.azure.com/api/projects/<project>
-FOUNDRY_MODEL_DEPLOYMENT=gpt-4.1
-APPLICATIONINSIGHTS_CONNECTION_STRING=<optional — disables tracing if omitted>
-```
-
----
 
 ## Tools Available to the Agent
 
