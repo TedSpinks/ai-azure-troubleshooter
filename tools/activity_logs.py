@@ -109,5 +109,23 @@ def get_activity_logs(
             + f" in the last {hours_back} hours"
             + (f" in resource group '{resource_group}'" if resource_group else "")
             + (f" with correlation ID '{correlation_id}'" if correlation_id else "")
-        )
+        ),
+        "history_summary": {
+            "count": len(trimmed),
+            "total_fetched": total_fetched,
+            "results_truncated": results_truncated,
+            "filter_applied": filter_text,
+            "summary": (
+                f"Found {len(trimmed)} activity log events"
+                + (f" matching '{filter_text}'" if filter_text else "")
+                + f" (fetched {total_fetched} total from API"
+                + (" — result limit reached, further events may exist."
+                   " Narrow scope with resource_group, filter_text, or hours_back,"
+                   " or increase max_events)"
+                   if results_truncated else ")")
+                + f" in the last {hours_back} hours"
+                + (f" in resource group '{resource_group}'" if resource_group else "")
+                + (f" with correlation ID '{correlation_id}'" if correlation_id else "")
+            )
+        }
     }

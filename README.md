@@ -19,6 +19,7 @@ Many organizations are cautious about consumer AI services retaining sensitive d
 - [Tips For Multi-Tenant Usage](#tips-for-multi-tenant-usage)
 - [Tools Available to the Agent](#tools-available-to-the-agent)
 - [How the Conversation Loop Works](#how-the-conversation-loop-works)
+- [How Context Management Works](#how-context-management-works)
 - [Tracing and Observability](#tracing-and-observability)
 - [System Prompt Design](#system-prompt-design)
 - [Ollama Local Model (Experimental)](#ollama-local-model-experimental--not-recommended)
@@ -197,22 +198,23 @@ The `ENV_FILE` shell variable tells the script which `.env` file to load. It is 
 
 ---
 
-
 ## Tools Available to the Agent
 
-| Tool | Purpose |
-|------|---------|
-| `get_activity_logs` | Fetch activity logs by time window or correlation ID |
-| `get_policy_definition` | Fetch a policy's full if/then rule and effect |
-| `get_policy_compliance_state` | Get compliance state for a scope or resource |
-| `get_policy_evaluation_details` | See exactly which conditions passed or failed |
-| `get_remediation_tasks` | Check DINE/Modify remediation task status |
-| `get_resource_properties` | Fetch full ARM properties of any resource |
-| `get_deployment_operations` | List deployments or drill into a specific one |
-| `get_deployment_template` | Retrieve the ARM template used in a deployment |
-| `get_deployment_details` | Get full deployment details including correlation ID |
-| `list_resource_groups` | List resource groups with optional filtering |
-| `list_resources` | List all resources in a resource group by type |
+All list-type tools have a default result limit to keep queries fast and responses focused. When a query hits its limit the agent will say so and can increase it if asked. Default limits are defined in the tool definitions in `agent.py`, not in the individual tool files — that is the right place to adjust them if needed.
+
+| Tool | Purpose | Default Limit |
+|------|---------|---------------|
+| `get_activity_logs` | Fetch activity logs by time window or correlation ID | 200 events |
+| `get_policy_definition` | Fetch a policy's full if/then rule and effect | — |
+| `get_policy_compliance_state` | Get compliance state for a scope or resource | 500 records |
+| `get_policy_evaluation_details` | See exactly which conditions passed or failed | 200 records |
+| `get_remediation_tasks` | Check DINE/Modify remediation task status | 100 tasks |
+| `get_resource_properties` | Fetch full ARM properties of any resource | — |
+| `get_deployment_operations` | List deployments or drill into a specific one | — |
+| `get_deployment_template` | Retrieve the ARM template used in a deployment | — |
+| `get_deployment_details` | Get full deployment details including correlation ID | — |
+| `list_resource_groups` | List resource groups with optional filtering | 500 groups |
+| `list_resources` | List all resources in a resource group by type | 500 resources |
 
 ---
 
@@ -235,6 +237,26 @@ This backend uses a stateless API. Conversation history is maintained as a Pytho
 5. When the model returns a response with no tool calls, print it and wait for the next user input
 
 History is lost when the script exits. Each new session starts fresh with only the system prompt.
+
+---
+
+## How Context Management Works
+
+Both backends have a finite context window — the total amount of text the model can hold in memory at once. As a session grows with tool calls and responses, the context fills up, which increases latency and can eventually cause errors. The agent is designed to stay within these limits without losing investigative capability.
+
+### Azure OpenAI backend — conversation history trimming
+
+Every tool result is appended to the `messages` list that gets sent to the model on every subsequent turn. Large list results — compliance records, resource groups, activity logs — can be thousands of tokens each, and they accumulate quickly across a long investigation.
+
+To address this, tools that return large result sets include a `history_summary` field alongside the full result. The agent loop sends the full result to the model for its immediate response, but stores only the `history_summary` in conversation history for future turns. The `history_summary` retains the fields the model needs for follow-up reasoning — counts, truncation status, resource IDs, and the human-readable summary — while discarding the bulk data that is no longer needed.
+
+The model's own reasoning and conclusions are always preserved in full as part of the assistant response messages in history, so nothing important is lost.
+
+To disable trimming — for example when debugging unexpected agent behavior or tuning the system prompt — set `TRIM_TOOL_HISTORY=false` in your `.env` file. Trimming is enabled by default.
+
+### Foundry backend — automatic thread management
+
+The Foundry SDK automatically handles truncation to fit thread contents within the model's context window — no configuration is required. For future tuning, the Foundry Agents API supports `max_prompt_tokens` and a `truncation_strategy` parameter on `client.runs.create()` (`auto` for default behavior, `last_messages` to specify how many recent messages to retain). Exposing these as configurable options is a planned improvement.
 
 ---
 

@@ -113,7 +113,13 @@ def get_policy_compliance_state(
         "count": len(trimmed),
         "results_truncated": results_truncated,
         "summary_by_state": summary,
-        "summary": f"Found {len(trimmed)} compliance records{truncation_note}. Breakdown: {summary}"
+        "summary": f"Found {len(trimmed)} compliance records{truncation_note}. Breakdown: {summary}",
+        "history_summary": {
+            "count": len(trimmed),
+            "results_truncated": results_truncated,
+            "summary_by_state": summary,
+            "summary": f"Found {len(trimmed)} compliance records{truncation_note}. Breakdown: {summary}"
+        }
     }
 
 

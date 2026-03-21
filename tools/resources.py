@@ -161,7 +161,16 @@ def list_resource_groups(
         "summary": (
             f"Found {len(trimmed)} resource group(s){filter_str}{truncation_note}: "
             + ", ".join(g["name"] for g in trimmed)
-        )
+        ),
+        "history_summary": {
+            "count": len(trimmed),
+            "results_truncated": results_truncated,
+            "names": [g["name"] for g in trimmed],
+            "summary": (
+                f"Found {len(trimmed)} resource group(s){filter_str}{truncation_note}: "
+                + ", ".join(g["name"] for g in trimmed)
+            )
+        }
     }
 
 
@@ -443,5 +452,14 @@ def list_resources(
         "summary": (
             f"Found {len(trimmed)} resource(s){filter_str} "
             f"in '{resource_group}'{truncation_note}"
-        )
+        ),
+        "history_summary": {
+            "count": len(trimmed),
+            "results_truncated": results_truncated,
+            "resource_ids": [r["id"] for r in trimmed],
+            "summary": (
+                f"Found {len(trimmed)} resource(s){filter_str} "
+                f"in '{resource_group}'{truncation_note}"
+            )
+        }
     }

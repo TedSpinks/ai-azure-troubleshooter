@@ -42,6 +42,11 @@ AOAI_API_KEY     = os.environ.get("AZURE_OPENAI_API_KEY")
 AOAI_DEPLOYMENT  = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1")
 AOAI_API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-05-01-preview")
 
+# Tool history trimming — reduces context window usage by storing only
+# key fields from large tool results in conversation history.
+# Set TRIM_TOOL_HISTORY=false in your .env to disable for debugging/tuning.
+TRIM_TOOL_HISTORY = os.environ.get("TRIM_TOOL_HISTORY", "true").lower() != "false"
+
 # ── Tool registry ─────────────────────────────────────────────────────────────
 # Maps function name (what the agent calls) to the actual Python function.
 # To add a new tool later: add the function here and add its definition
@@ -941,10 +946,27 @@ def run_aoai():
             # Execute every tool call the model requested
             for tc in message.tool_calls:
                 result = execute_tool(tc.function.name, tc.function.arguments)
+
+                # Use trimmed history_summary if available and trimming is enabled,
+                # otherwise store the full result. The model sees the full result
+                # for its immediate response via execute_tool above — trimming only
+                # affects what is retained in history for future turns.
+                if TRIM_TOOL_HISTORY:
+                    try:
+                        result_dict = json.loads(result)
+                        history_content = json.dumps(
+                            result_dict.get("history_summary", result_dict),
+                            default=str
+                        )
+                    except Exception:
+                        history_content = result
+                else:
+                    history_content = result
+
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,
-                    "content": result,
+                    "content": history_content,
                 })
             # Loop back — model will now process the tool results
 
