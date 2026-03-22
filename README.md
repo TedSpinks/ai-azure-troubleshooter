@@ -1,6 +1,8 @@
-# AI-Powered Azure Troubleshooter
+# AzureSleuth
 
-You know those troubleshooting sessions where you're copying errors and logs from five different places in the Azure Portal into Claude or ChatGPT, one event at a time? Activity logs, deployment operations, policy evaluations... it's tedious. I built this chat agent to go and get all of that itself. You describe the problem and guide the investigation; the agent figures out what to look at, calls the right Azure APIs, and synthesizes a root cause explanation.
+Because root cause shouldn't take all day.
+
+You know those troubleshooting sessions where you're copying errors and logs from five different places in the Azure Portal into Claude or ChatGPT, one event at a time? Activity logs, deployment operations, policy evaluations... it's tedious. I built this chat agent to go and get all of that itself. You describe the problem; AzureSleuth figures out what to look at, calls the right Azure APIs, and synthesizes a root cause explanation.
 
 Features:
 - Runs locally on your laptop, just `az login` to whatever Azure tenant you're investigating
